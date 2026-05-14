@@ -68,7 +68,7 @@ does not trigger it on its own. After running a scenario:
 
 4. To find the specific RADOS object and key count, search the cluster log:
    ```
-   ceph log last 1000 cluster | grep -i "Large omap object"
+   grep -i "Large omap object" /var/log/ceph/<fsid>/ceph.log
    ```
    Or directly inspect a suspected index object:
    ```
