@@ -140,11 +140,7 @@ is the textbook "why we reshard" reproducer.
    radosgw-admin bucket reshard --bucket=omap-scenario-1 \
        --num-shards=1 --yes-i-really-mean-it
    ```
-   On older releases that lack the inline `bucket reshard` subcommand, queue
-   it via the reshard list instead:
-   ```
-   radosgw-admin bucket reshard --bucket=omap-scenario-1 --num-shards=1
-   ```
+
    Confirm the new shard count:
    ```
    radosgw-admin bucket stats --bucket=omap-scenario-1 | grep num_shards
@@ -216,7 +212,7 @@ they are easy to miss until OMAP balloons.
 4. **Confirm the uploads are stuck:**
    ```
    radosgw-admin bucket stats --bucket=omap-scenario-3
-   
+
    aws --endpoint-url http://<rgw> s3api list-multipart-uploads \
        --bucket omap-scenario-3 | head
    ```
@@ -352,7 +348,7 @@ index pool, matching the article's "Metadata Pool" section.
 
 ```
 # Bulk-delete all empty buckets the user owns
-for b in $(radosgw-admin bucket list --uid=omaptest | jq -r '.[]'); do
+for b in $(radosgw-admin bucket list --uid=omaptest); do
   radosgw-admin bucket rm --bucket="$b"
 done
 radosgw-admin user modify --uid=omaptest --max-buckets=1000
