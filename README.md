@@ -7,6 +7,8 @@ tuning option that makes every scenario fast enough to use in a lab.
 Four scenarios target the **bucket index pool** (`*.rgw.buckets.index`) and one
 targets the **meta pool** (`*.rgw.meta`).
 
+A companion Python script ([`large_omap_repro.py`](large_omap_repro.py)) automates all scenarios with parallel execution for faster testing.
+
 ---
 
 ## Prerequisites
@@ -77,7 +79,7 @@ does not trigger it on its own. After running a scenario:
 
 ---
 
-## Scenario 2 (Tuning Option): Lower the Threshold
+## Tuning Option: Lower the Threshold
 
 The default threshold is **200,000 OMAP keys per object**. In a lab you
 probably do not want to upload 200k+ objects just to validate the alert path,
@@ -123,14 +125,13 @@ is the textbook "why we reshard" reproducer.
    Restart the RGW daemons (`systemctl restart ceph-radosgw@*` or via
    `cephadm`/orchestrator) so the change takes effect.
 
-2. **Create the bucket from an S3 client.** RGW has no `radosgw-admin bucket
-   create` command — buckets must always be created over the S3 API:
+2. **Create the bucket from an S3 client:**
    ```
-   aws --endpoint-url http://<rgw> s3 mb s3://omap-scenario-1
+   aws s3 mb s3://omap-scenario-1 --endpoint-url http://<rgw-host>:<port>
    ```
    or with `s3cmd`:
    ```
-   s3cmd --host=<rgw> mb s3://omap-scenario-1
+   s3cmd --host=<rgw-host>:<port> --no-ssl mb s3://omap-scenario-1
    ```
  
 3. **Reshard the bucket down to 1 shard.** Newly created buckets use the
@@ -149,9 +150,11 @@ is the textbook "why we reshard" reproducer.
 4. **Upload more objects than the threshold.** With the tuned threshold of
    5000, upload ~6000 zero-byte objects. With the default threshold, upload
    210,000+. Object content is irrelevant — only the key count matters.
+
 5. **Verify the index object grew:**
    ```
-   radosgw-admin bucket stats --bucket=omap-scenario-1 | grep -E "id|marker"
+   radosgw-admin bucket stats --bucket=omap-scenario-1 | grep -E "num_objects"
+
    # then for each shard (just shard 0 here):
    rados -p default.rgw.buckets.index listomapkeys .dir.<marker>.0 | wc -l
    ```
@@ -184,14 +187,13 @@ they are easy to miss until OMAP balloons.
    ```
    Restart RGW.
 
-2. **Create the bucket from an S3 client.** RGW has no `radosgw-admin bucket
-   create` command — buckets must always be created over the S3 API:
+2. **Create the bucket from an S3 client:**
    ```
-   aws --endpoint-url http://<rgw> s3 mb s3://omap-scenario-1
+   aws s3 mb s3://omap-scenario-3 --endpoint-url http://<rgw-host>:<port>
    ```
    or with `s3cmd`:
    ```
-   s3cmd --host=<rgw> mb s3://omap-scenario-1
+   s3cmd --host=<rgw-host>:<port> --no-ssl mb s3://omap-scenario-3
    ```
  
 
@@ -203,8 +205,10 @@ they are easy to miss until OMAP balloons.
    With the AWS CLI you'd loop:
    ```
    for i in $(seq 1 6000); do
-     aws --endpoint-url http://<rgw> s3api create-multipart-upload \
-         --bucket omap-scenario-3 --key "incomplete-$i" >/dev/null
+     aws s3api create-multipart-upload \
+         --bucket omap-scenario-3 \
+         --key "incomplete-$i" \
+         --endpoint-url http://<rgw-host>:<port> >/dev/null
    done
    ```
    The companion Python script does this in parallel.
@@ -213,8 +217,9 @@ they are easy to miss until OMAP balloons.
    ```
    radosgw-admin bucket stats --bucket=omap-scenario-3
 
-   aws --endpoint-url http://<rgw> s3api list-multipart-uploads \
-       --bucket omap-scenario-3 | head
+   aws s3api list-multipart-uploads \
+       --bucket omap-scenario-3 \
+       --endpoint-url http://<rgw-host>:<port> | head
    ```
 
 5. Force a deep scrub and check `ceph health detail`.
@@ -241,10 +246,11 @@ relatively small set of keys can therefore generate a very large index.
 
 2. **Create a bucket and enable versioning:**
    ```
-   aws --endpoint-url http://<rgw> s3 mb s3://omap-scenario-4
-   aws --endpoint-url http://<rgw> s3api put-bucket-versioning \
+   aws s3 mb s3://omap-scenario-4 --endpoint-url http://<rgw-host>:<port>
+   aws s3api put-bucket-versioning \
        --bucket omap-scenario-4 \
-       --versioning-configuration Status=Enabled
+       --versioning-configuration Status=Enabled \
+       --endpoint-url http://<rgw-host>:<port>
    ```
 
 3. **Repeatedly overwrite a small set of keys.** For example, 60 keys × 100
@@ -252,8 +258,10 @@ relatively small set of keys can therefore generate a very large index.
 
 4. **Confirm versions exist:**
    ```
-   aws --endpoint-url http://<rgw> s3api list-object-versions \
-       --bucket omap-scenario-4 --max-items 5
+   aws s3api list-object-versions \
+       --bucket omap-scenario-4 \
+       --max-items 5 \
+       --endpoint-url http://<rgw-host>:<port>
    ```
 
 5. Force a deep scrub and check `ceph health detail`.
@@ -287,9 +295,11 @@ without lifecycle cleanup hit this often.
 
 4. **Confirm delete markers:**
    ```
-   aws --endpoint-url http://<rgw> s3api list-object-versions \
-       --bucket omap-scenario-5 --max-items 5 \
-       --query 'DeleteMarkers[*].Key'
+   aws s3api list-object-versions \
+       --bucket omap-scenario-5 \
+       --max-items 5 \
+       --query 'DeleteMarkers[*].Key' \
+       --endpoint-url http://<rgw-host>:<port>
    ```
 
 5. Force a deep scrub and check `ceph health detail`.
@@ -385,18 +395,60 @@ After you are done testing, restore the cluster to its normal state:
 
 ---
 
+## Using the Python Script
+
+The companion script [`large_omap_repro.py`](large_omap_repro.py) automates all scenarios with parallel execution:
+
+```bash
+# Install dependencies
+pip install boto3
+
+# 1. Lower the threshold (requires ceph admin access)
+sudo ./large_omap_repro.py tune-threshold --keys 5000
+
+# 2. Run a scenario (example: scenario-1)
+./large_omap_repro.py scenario-1 \
+    --endpoint http://rgw.example.com:8080 \
+    --access-key XXXX --secret-key YYYY \
+    --count 6000 \
+    --disable-resharding \
+    --force-single-shard
+
+# 3. Verify the warning
+./large_omap_repro.py verify
+
+# 4. Cleanup when done
+./large_omap_repro.py cleanup \
+    --endpoint http://rgw.example.com:8080 \
+    --access-key XXXX --secret-key YYYY
+```
+
+**Script Features:**
+- Parallel execution with configurable worker count (`--parallelism`)
+- Automatic bucket naming with unique suffixes
+- Support for environment variables (`RGW_ENDPOINT`, `RGW_ACCESS_KEY`, `RGW_SECRET_KEY`)
+- Built-in cleanup for all created resources
+- Progress tracking and error reporting
+
+**Available Scenarios:**
+- `tune-threshold` - Lower OSD thresholds for faster testing
+- `scenario-1` - Single-shard bucket saturation
+- `scenario-3` - Incomplete multipart uploads
+- `scenario-4` - Versioned bucket with repeated overwrites
+- `scenario-5` - Delete marker accumulation
+- `scenario-7` - Many buckets per user (meta pool)
+- `verify` - Print verification commands
+- `cleanup` - Remove all created buckets
+
+Run `./large_omap_repro.py <scenario> --help` for scenario-specific options.
+
+---
+
 ## Notes and Caveats
 
-- **Never run any of this on a production cluster.** Even with cleanup,
-  forcing deep scrubs and bulk uploads consumes real I/O and RocksDB work.
-- The warning will not appear immediately after uploading data — it is raised
-  only after the next deep scrub of the affected PG(s). Always force a deep
-  scrub when validating.
-- If you previously had dynamic resharding enabled, RGW may have already
-  resharded your bucket in the background; you'll see this as multiple
-  bucket-instance entries. Disabling resharding *after* the fact does not
-  undo a reshard that already started.
-- On multisite, do scenario 1–5 on a single zone only; replicating these
-  problems across zones will multiply the cleanup work.
-- Versioned-bucket cleanup is slow. Budget time for the `--purge-objects`
-  pass on scenarios 4 and 5.
+- **Never run this on a production cluster.** Even with cleanup, forcing deep scrubs and bulk uploads consumes significant I/O and RocksDB resources.
+- The warning appears only after deep scrub of the affected PG(s), not immediately after uploading data. Always force a deep scrub when validating.
+- If dynamic resharding was previously enabled, RGW may have already resharded buckets in the background. Disabling resharding after the fact does not undo completed reshards.
+- On multisite setups, run scenarios 1–5 on a single zone only to avoid multiplying cleanup work across zones.
+- Versioned-bucket cleanup (scenarios 4 and 5) is slow. Budget adequate time for the `--purge-objects` operation.
+- The script uses the bucket name prefix `omap-repro-` for all created buckets, making them easy to identify and clean up.

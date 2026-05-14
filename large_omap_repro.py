@@ -25,12 +25,20 @@ Quick start:
     sudo ./large_omap_repro.py tune-threshold --keys 5000
 
     # 2. Pick a scenario (uses the tuned threshold above)
-    ./large_omap_repro.py scenario-1 \\
-        --endpoint http://rgw.example.com:8080 \\
-        --access-key XXXX --secret-key YYYY --count 6000
+    ./large_omap_repro.py scenario-1 \
+        --endpoint http://rgw.example.com:8080 \
+        --access-key XXXX --secret-key YYYY \
+        --count 6000 \
+        --disable-resharding \
+        --force-single-shard
 
     # 3. Verify (this just prints the commands to run on a Ceph admin node)
     ./large_omap_repro.py verify
+
+    # 4. Cleanup when done
+    ./large_omap_repro.py cleanup \
+        --endpoint http://rgw.example.com:8080 \
+        --access-key XXXX --secret-key YYYY
 
 Requirements:
     pip install boto3
@@ -505,11 +513,12 @@ appears. Run these on a Ceph admin node:
 
   # Wait for scrubs to finish, then:
   ceph health detail
-  ceph log last 1000 cluster | grep -i 'Large omap object'
 
-  # To inspect a specific bucket's index OMAP key count:
-  radosgw-admin bucket stats --bucket=<bucket> | grep -E 'id|marker'
-  rados -p default.rgw.buckets.index listomapkeys .dir.<marker>.0 | wc -l
+  # To find the specific RADOS object and key count, search the cluster log:
+  grep -i "Large omap object" /var/log/ceph/<fsid>/ceph.log
+
+  # Or directly inspect a suspected index object:
+  rados -p default.rgw.buckets.index listomapkeys <object-name> | wc -l
 """
 
 
