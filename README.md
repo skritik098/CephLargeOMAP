@@ -137,7 +137,7 @@ is the textbook "why we reshard" reproducer.
 
 4. **Verify the index object grew:**
    ```
-   radosgw-admin bucket stats --bucket=omap-scenario-1 | grep -E "id|marker"
+   radosgw-admin bucket stats --bucket=omap-scenario-1 | grep -E "num_objects"
    # then for each shard (just shard 0 here):
    rados -p default.rgw.buckets.index listomapkeys .dir.<marker>.0 | wc -l
    ```
