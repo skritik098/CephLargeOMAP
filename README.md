@@ -123,26 +123,44 @@ is the textbook "why we reshard" reproducer.
    Restart the RGW daemons (`systemctl restart ceph-radosgw@*` or via
    `cephadm`/orchestrator) so the change takes effect.
 
-2. **Create a bucket with a single shard:**
+2. **Create the bucket from an S3 client.** RGW has no `radosgw-admin bucket
+   create` command — buckets must always be created over the S3 API:
    ```
-   radosgw-admin bucket create --bucket=omap-scenario-1 \
-       --uid=omaptest --num-shards=1
+   aws --endpoint-url http://<rgw> s3 mb s3://omap-scenario-1
    ```
-   (On some releases you must create the bucket from S3, then reshard down to
-   1 shard with `radosgw-admin reshard add` + `reshard process`.)
-
-3. **Upload more objects than the threshold.** With the tuned threshold of
+   or with `s3cmd`:
+   ```
+   s3cmd --host=<rgw> mb s3://omap-scenario-1
+   ```
+ 
+3. **Reshard the bucket down to 1 shard.** Newly created buckets use the
+   default shard count (commonly 11 on recent releases), so concentrate every
+   key into a single OMAP object:
+   ```
+   radosgw-admin bucket reshard --bucket=omap-scenario-1 \
+       --num-shards=1 --yes-i-really-mean-it
+   ```
+   On older releases that lack the inline `bucket reshard` subcommand, queue
+   it via the reshard list instead:
+   ```
+   radosgw-admin bucket reshard --bucket=omap-scenario-1 --num-shards=1
+   ```
+   Confirm the new shard count:
+   ```
+   radosgw-admin bucket stats --bucket=omap-scenario-1 | grep num_shards
+   ```
+ 
+4. **Upload more objects than the threshold.** With the tuned threshold of
    5000, upload ~6000 zero-byte objects. With the default threshold, upload
    210,000+. Object content is irrelevant — only the key count matters.
-
-4. **Verify the index object grew:**
+5. **Verify the index object grew:**
    ```
-   radosgw-admin bucket stats --bucket=omap-scenario-1 | grep -E "num_objects"
+   radosgw-admin bucket stats --bucket=omap-scenario-1 | grep -E "id|marker"
    # then for each shard (just shard 0 here):
    rados -p default.rgw.buckets.index listomapkeys .dir.<marker>.0 | wc -l
    ```
-
-5. **Force a deep scrub** on the index pool PGs and check `ceph health detail`
+ 
+6. **Force a deep scrub** on the index pool PGs and check `ceph health detail`
    as described in the verification section.
 
 ### Cleanup
@@ -170,11 +188,16 @@ they are easy to miss until OMAP balloons.
    ```
    Restart RGW.
 
-2. **Create the test bucket:**
+2. **Create the bucket from an S3 client.** RGW has no `radosgw-admin bucket
+   create` command — buckets must always be created over the S3 API:
    ```
-   radosgw-admin bucket create --bucket=omap-scenario-3 \
-       --uid=omaptest --num-shards=1
+   aws --endpoint-url http://<rgw> s3 mb s3://omap-scenario-1
    ```
+   or with `s3cmd`:
+   ```
+   s3cmd --host=<rgw> mb s3://omap-scenario-1
+   ```
+ 
 
 3. **Initiate multipart uploads without completing them.** For each upload,
    call `CreateMultipartUpload` and stop — do not call `CompleteMultipartUpload`
@@ -192,7 +215,8 @@ they are easy to miss until OMAP balloons.
 
 4. **Confirm the uploads are stuck:**
    ```
-   radosgw-admin bucket check --bucket=omap-scenario-3 --check-objects
+   radosgw-admin bucket stats --bucket=omap-scenario-3
+   
    aws --endpoint-url http://<rgw> s3api list-multipart-uploads \
        --bucket omap-scenario-3 | head
    ```
